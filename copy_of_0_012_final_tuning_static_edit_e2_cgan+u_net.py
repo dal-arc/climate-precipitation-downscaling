@@ -343,23 +343,23 @@ targets_data_transformed = targets_data_transformed.transpose("time", "lat", "lo
 Y = targets_data_transformed.values.astype("float32")
 
 # عرض الشكل للتأكد
-print("✅ Y shape:", Y.shape)
+print("Y shape:", Y.shape)
 
 print(f"🔍 Y - Min: {Y.min():.3f}")
 print(f"🔍 Y - Max: {Y.max():.3f}")
 
 """for static varaibles"""
 
-# ✅ استخراج المتغيرات من elevation
+#  استخراج المتغيرات من elevation
 orog2 = elevation["orog"].values
 vegt2 = elevation["vegt"].values
 he2   = elevation["he"].values
 
-# ✅ دالة للتطبيع إلى المجال [0, 1]
+#  دالة للتطبيع إلى المجال [0, 1]
 def normalize_to_01(arr):
     return (arr - np.min(arr)) / (np.max(arr) - np.min(arr) + 1e-8)
 
-# ✅ تطبيق التطبيع
+#  تطبيق التطبيع
 orog = normalize_to_01(orog2)
 vegt = normalize_to_01(vegt2)
 he  = normalize_to_01(he2)
