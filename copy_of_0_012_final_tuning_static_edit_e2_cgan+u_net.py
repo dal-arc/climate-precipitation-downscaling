@@ -374,587 +374,8 @@ print(f"{'he':<8}   | {he2.min():10.3f}   | {he2.max():10.3f}   || {he.min():10.
 
 """# Layers"""
 
-def res_block_initial(x, num_filters, kernel_size, strides, name, sym_padding =True):
-
-
-
-    if len(num_filters) == 1:
-        num_filters = [num_filters[0], num_filters[0]]
-    if sym_padding:
-        x1 = SymmetricPadding2D(padding=[int((kernel_size-1)//2), int((kernel_size-1)//2)])(x)
-        x1 = tf.keras.layers.Conv2D(filters=num_filters[0],
-                                    kernel_size=kernel_size,
-                                    strides=strides[0],
-                                    padding='valid',
-                                    name=name + '_1')(x1)
-    else:
-        x1 = tf.keras.layers.Conv2D(filters=num_filters[0],
-                                    kernel_size=kernel_size,
-                                    strides=strides[0],
-                                    padding='same',
-                                    name=name + '_1')(x)
-
-    x1 = tf.keras.layers.LeakyReLU(0.01)(x1)
-    if sym_padding:
-        x1 = SymmetricPadding2D(padding=[int((kernel_size - 1) // 2), int((kernel_size - 1) // 2)])(x1)
-        x1 = tf.keras.layers.Conv2D(filters=num_filters[1],
-                                    kernel_size=kernel_size,
-                                    strides=strides[1],
-                                    padding='same',
-                                    name=name + '_2')(x1)
-
-        x = tf.keras.layers.Conv2D(filters=num_filters[-1],
-                                   kernel_size=1,
-                                   strides=1,
-                                   padding='same',
-                                   name=name + '_shortcut')(x)
-    else:
-        x1 = tf.keras.layers.Conv2D(filters=num_filters[1],
-                                    kernel_size=kernel_size,
-                                    strides=strides[1],
-                                    padding='same',
-                                    name=name + '_2')(x1)
-
-        x = tf.keras.layers.Conv2D(filters=num_filters[-1],
-                                   kernel_size=1,
-                                   strides=1,
-                                   padding='same',
-                                   name=name + '_shortcut')(x)
-
-
-    x = tf.keras.layers.Lambda(
-    lambda inputs: tf.image.resize(inputs[0], tf.shape(inputs[1])[1:3], method='bilinear')
-    )([x, x1])
-
-
-    x1 = tf.keras.layers.Add()([x, x1])
-    x1 = tf.keras.layers.LeakyReLU(0.01)(x1)
-    return x1
-
-
-
-
-
-
-class BicubicUpSampling2D(tf.keras.layers.Layer):
-    def __init__(self, size, **kwargs):
-        super(BicubicUpSampling2D, self).__init__(**kwargs)
-        self.size = size
-
-    def call(self, inputs):
-        return tf.image.resize(inputs, [int(inputs.shape[1] * self.size[0]), int(inputs.shape[2] * self.size[1])],
-                               method=tf.image.ResizeMethod.BILINEAR)
-
-    def get_config(self):
-        config = super().get_config().copy()
-        config.update({
-            'size': self.size
-        })
-        return config
-
-
-
-
-
-
-
-
-
-class SymmetricPadding2D(tf.keras.layers.Layer):
-
-    def __init__(self, padding=[1,1], **kwargs):
-
-        super(SymmetricPadding2D, self).__init__(**kwargs)
-        self.padding = padding
-
-    def build(self, input_shape):
-        super(SymmetricPadding2D, self).build(input_shape)
-
-    def call(self, inputs):
-        if self.padding[0] >1:
-            pad = [[0, 0]] + [[1, 1], [1, 1]] + [[0, 0]]
-            paddings = tf.constant(pad)
-            out = tf.pad(inputs, paddings, "SYMMETRIC")
-            for i in range(self.padding[0]-1):
-                pad = [[0, 0]] + [[1, 1], [1, 1]] + [[0, 0]]
-                paddings = tf.constant(pad)
-                out = tf.pad(out, paddings, "SYMMETRIC")
-            return out
-        else:
-
-            pad = [[0, 0]] + [[1, 1], [1, 1]] + [[0, 0]]
-            paddings = tf.constant(pad)
-            out = tf.pad(inputs, paddings, "SYMMETRIC")
-            return out
-
-    def compute_output_shape(self, input_shape):
-        return (input_shape[0], input_shape[1] + self.padding[0],
-                input_shape[2] + self.padding[1], input_shape[-1])
-
-    def get_config(self):
-        config = super().get_config().copy()
-        config.update({
-            'padding': self.padding
-        })
-        return config
-
-
-
-
-
-
-def upsample(x, target_size):
-
-    x_resized = BicubicUpSampling2D((target_size, target_size))(x)
-    return x_resized
-
-
-
-
-
-
-def conv_block(x, filters, activation, kernel_size=(3, 3), strides=(2, 2),
-               padding="same", use_bias=True, use_bn=True, use_dropout=False, drop_value=0.0):
-    x = layers.Conv2D(filters, kernel_size, strides=strides,
-                      padding=padding, use_bias=use_bias)(x)
-    x = tf.keras.layers.LeakyReLU(0.01)(x)
-    return x
-
-
-
-
-
-
-
-def decoder_noise(x, num_filters, kernel_size):
-
-
-    noise_inputs = []
-    for i in range(1, len(num_filters) + 1):
-        layer2 = 'decoder_layer_v2' + str(i)
-        x = upsample(x, 2)
-        x = res_block_initial(x, [num_filters[-i]], kernel_size, strides=[1, 1], name='decoder_layer_v2' + str(i),
-                              sym_padding =False)
-    return x, noise_inputs
-
-
-
-
-
-
-
-
-def down_block(x, filters, kernel_size, i =1, use_pool=True, method ='unet', sym_padding =True):
-
-        x = res_block_initial(x, [filters], kernel_size, strides=[1, 1],
-                          name='decoder_layer_v2' + str(i),
-                              sym_padding = sym_padding)
-        if use_pool == True:
-
-
-          return tf.keras.layers.AveragePooling2D(pool_size=(2, 2), strides=(2, 2))(x), x
-
-
-        else:
-            return x
-
-
-
-
-
-
-
-
-def up_block(x, y, filters, kernel_size, i=1, method='unet', concat=True, sym_padding=True):
-    x = upsample(x, 2)
-
-
-    x = tf.keras.layers.Lambda(lambda inputs: tf.image.resize(
-        inputs[0], tf.shape(inputs[1])[1:3], method='bilinear'
-    ))([x, y])
-
-    if concat:
-        x = tf.keras.layers.Concatenate(axis=-1)([x, y])
-        x = res_block_initial(x, [filters], kernel_size, strides=[1, 1],
-                              name='encoder_layer_v2' + str(i), sym_padding=sym_padding)
-    return x
-
-"""# Hyperparameters"""
-
-#for Classes
-ad_loss = 0.012
-batch_size = 128
-intensity_weight = 1 #0 خاص بقيود الشدة القصوى والمتوسطة للمطر , صفر يعني يتجاهل القيود الفيزيائيه
-gp_weight = 10
-fine_tuning = False # خاص باليونت , يحدد هل يدرب ام فقط يستخدم للتنبؤ
-#model = WGAN_Cascaded_Residual_IP_CC_pres(..., train_unet=fine_tuning)
-discrim_steps = 3 # D
-
-
-
-
-#for layers
-kernel_size = 3
-
-
-
-
-#for compile
-learning_rate = 0.00005 # D , G
-learning_rate_unet = 0.0008 # U #0.0007
-beta_1 = 0.5 #G , D , U
-beta_2 = 0.9 #G , D , U
-decay_steps = 1000 #صحيح
-decay_rate_gan = 0.9945 # G
-decay_rate = 0.989 # U
-
-
-
-
-#for Unet and generator
-num_filters = [32, 64, 128] #G , U
-input_size = (23, 26)
-resize_output = (172, 179)
-num_channels = 8
-num_classes = 1
-
-"""# Discriminator"""
-
-def discriminator(high_resolution_fields_size,
-                            low_resolution_fields_size, use_bn=False,
-                            use_dropout=False, use_bias=True, low_resolution_feature_channels=(32, 64, 128),
-                            low_resolution_dense_neurons =6,
-                            high_resolution_feature_channels=(32, 64, 12)):
-
-
-    IMG_SHAPE = high_resolution_fields_size
-    IMG_SHAPE2 = low_resolution_fields_size
-
-
-    img_input = layers.Input(shape=IMG_SHAPE) # real or fake predictions
-    img_input2 = layers.Input(shape=(IMG_SHAPE2[0], IMG_SHAPE2[1], 8))  # (23, 26, 8)
-    # boundary conditions or predictor fields
-
-    # these are static inputs to the model
-    img_input3 = layers.Input(shape=IMG_SHAPE) # Topography predictor variable
-    img_input4 = layers.Input(shape=IMG_SHAPE) # other CCAM auxilary variables if used
-    img_input5 = layers.Input(shape=IMG_SHAPE)
-    img_input6 = layers.Input(shape=IMG_SHAPE) # UNET regressoin predictor.
-
-
-    def ensure_4d_input(x):
-        return Lambda(lambda t: tf.expand_dims(t, -1))(x)
-
-    img_input = ensure_4d_input(img_input)
-    img_input3 = ensure_4d_input(img_input3)
-    img_input4 = ensure_4d_input(img_input4)
-    img_input5 = ensure_4d_input(img_input5)
-    img_input6 = ensure_4d_input(img_input6)
-
-    # Topography predictor variables together
-    img_inputs = tf.keras.layers.Concatenate(-1)([img_input3, img_input4, img_input5])
-
-
-
-
-
-    # Low resolution data stream
-    x_init = conv_block(img_input2, low_resolution_feature_channels[0], kernel_size=(3, 3), strides=(2, 2), use_bn=use_bn, use_bias=use_bias,
-                        use_dropout=use_dropout, drop_value=0.0, activation=tf.keras.layers.LeakyReLU())
-    x_init = conv_block(x_init, low_resolution_feature_channels[0], kernel_size=(3, 3), strides=(2, 2), use_bn=use_bn, use_bias=use_bias,
-                        use_dropout=use_dropout, drop_value=0.0, activation=tf.keras.layers.LeakyReLU())
-    # coarsen the data slightly
-    x_init = conv_block(x_init, low_resolution_feature_channels[1], kernel_size=(3, 3), strides=(2, 2), use_bn=use_bn, use_bias=use_bias,
-                        use_dropout=use_dropout, drop_value=0.0, activation=tf.keras.layers.LeakyReLU())
-
-    x_init = conv_block(x_init, low_resolution_feature_channels[2], kernel_size=(3, 3), strides=(2, 2), use_bn=use_bn, use_bias=use_bias,
-                        use_dropout=use_dropout, drop_value=0.0, activation=tf.keras.layers.LeakyReLU())
-
-    flatten = tf.keras.layers.Flatten()(x_init)
-    flatten = tf.keras.layers.Dense(low_resolution_dense_neurons)(flatten)
-
-
-
-
-
-    # high-resolution data stream
-    # first we put "real or fake data" with 32 channels, to allow it to be more important
-    x = conv_block(img_input, high_resolution_feature_channels[0], kernel_size=(3, 3), strides=(2, 2),
-                   use_bn=use_bn, use_bias=use_bias,
-                   use_dropout=use_dropout, drop_value=0.0, activation=tf.keras.layers.LeakyReLU())
-
-    # topography and residuals only have one filter
-    x2 = conv_block(img_inputs, 1, kernel_size=(5, 5), strides=(2, 2),
-                    use_bn=use_bn, use_bias=use_bias,
-                    use_dropout=use_dropout, drop_value=0.0, activation=tf.keras.layers.LeakyReLU())
-    # have two separate streams of conditional inputs into the model
-
-    x2 = layers.Resizing(
-    height=K.int_shape(x)[1],
-    width=K.int_shape(x)[2],
-    interpolation="bilinear"
-    )(x2)
-    x = tf.keras.layers.Concatenate(-1)([x, x2])
-
-
-
-
-    x = conv_block(x, high_resolution_feature_channels[1], kernel_size=(3, 3), strides=(2, 2),
-                   use_bn=use_bn, use_bias=use_bias,
-                   use_dropout=use_dropout, drop_value=0.0, activation=tf.keras.layers.LeakyReLU())
-
-
-    x_init_raw = conv_block(x, high_resolution_feature_channels[1], kernel_size=(3, 3), strides=(2, 2),
-                            use_bn=use_bn, use_bias=use_bias,
-                            use_dropout=use_dropout, drop_value=0.0, activation=tf.keras.layers.LeakyReLU())
-
-    x_init_raw = conv_block(x_init_raw, high_resolution_feature_channels[2], kernel_size=(3, 3), strides=(2, 2),
-                            use_bn=use_bn, use_bias=use_bias,
-                            use_dropout=use_dropout, drop_value=0.0,
-                            activation=tf.keras.layers.LeakyReLU())
-    flattened_output = layers.Flatten()(x_init_raw)
-    concat = tf.keras.layers.Concatenate(-1)([flatten, flattened_output])
-    dense2 = tf.keras.layers.Dense(64)(concat)
-
-    x = layers.Dense(1)(dense2)
-
-
-
-
-
-
-    #fake_images = self.generator([random_latent_vectors, average,orog_vector, he_vector, vegt_vector, init_prediction], training=True)
-
-    d_model = keras.models.Model(
-    [img_input, img_input2, img_input3, img_input4, img_input5, img_input6], x,
-    name="discriminator"
-)
-
-
-    return d_model
-
-def res_block_simple(x, num_filters, kernel_size, strides, name):
-    if len(num_filters) == 1:
-        num_filters = [num_filters[0], num_filters[0]]
-
-    x1 = tf.keras.layers.Conv2D(filters=num_filters[0],
-                                kernel_size=kernel_size,
-                                strides=strides[0],
-                                padding='same',
-                                name=name + '_1')(x)
-    x1 = tf.keras.layers.LeakyReLU(0.01)(x1)
-
-    x1 = tf.keras.layers.Conv2D(filters=num_filters[1],
-                                kernel_size=kernel_size,
-                                strides=strides[1],
-                                padding='same',
-                                name=name + '_2')(x1)
-
-    x = tf.keras.layers.Conv2D(filters=num_filters[-1],
-                               kernel_size=1,
-                               strides=1,
-                               padding='same',
-                               name=name + '_shortcut')(x)
-
-    x1 = tf.keras.layers.Add()([x, x1])
-    x1 = tf.keras.layers.LeakyReLU(0.01)(x1)
-    return x1
-
-"""# Generator"""
-
-def generator(input_size, resize_output, num_filters, num_channels, num_classes, resize=True,
-                          bn=True):
-
-
-
-
-
-    x = tf.keras.Input(shape=[input_size[0], input_size[1], num_channels]) # predictor variables X
-    img_input3 = layers.Input(shape=[resize_output[0], resize_output[1], 1]) # topography (RCM resolution)
-    img_input4 = layers.Input(shape=[resize_output[0], resize_output[1], 1]) # other auxiilary variables if needed
-    img_input5 = layers.Input(shape=[resize_output[0], resize_output[1], 1])
-    img_input6 = layers.Input(shape=[resize_output[0], resize_output[1], 1])# U-Net prediction (regression-baseline)
-    # input vectors
-    img_inputs = tf.keras.layers.Concatenate(-1)([img_input3, img_input4, img_input5, img_input6])
-    # high-resolution information stream
-
-
-
-
-    x_init_ref_fields_high_res = conv_block(img_inputs, 16, kernel_size=(5, 5), strides=(1, 1), use_bn=bn, use_bias=True,
-                                            use_dropout=False, drop_value=0.0, activation=tf.keras.layers.LeakyReLU(0.2))
-    x_init_ref_fields_high_res = conv_block(x_init_ref_fields_high_res, 64, kernel_size=(5, 5), strides=(1, 1), use_bn=bn, use_bias=True,
-                                            use_dropout=False, drop_value=0.0, activation=tf.keras.layers.LeakyReLU(0.2))
-    x_init_ref_fields = tf.keras.layers.AveragePooling2D((2, 2))(x_init_ref_fields_high_res)
-
-    # lowering the importance of topography
-    x_init_ref_fields = conv_block(x_init_ref_fields, 64, kernel_size=(5, 5), strides=(1, 1), use_bn=bn, use_bias=True,
-                                   use_dropout=False, drop_value=0.0, activation=tf.keras.layers.LeakyReLU(0.2))
-
-    x_init_ref_fields = tf.keras.layers.AveragePooling2D((2, 2))(x_init_ref_fields)
-    x_init_ref_fields = Lambda(
-    lambda x: tf.image.resize(x, (input_size[0], input_size[1]), method='bilinear')
-    )(x_init_ref_fields)
-
-    # this is now the same resolution as the input fields
-
-
-
-
-
-    # concat noise with inputs in this layer
-    noise = layers.Input(shape=(x.shape[1], x.shape[2], x.shape[3]))
-    concat_noise = tf.keras.layers.Concatenate(-1)([x, noise])
-    # add some noise within the GAN framework
-    x_output = res_block_simple(concat_noise, [num_filters[-1]], 3, [1, 1], "input_layer") # المربع الرصاصي هو ناتج الاكس والضوضاء بعد تمريرها لطبقة بقايا
-    # add the reference static fields as an input
-    x_init_ref_fields_resized = tf.keras.layers.Lambda(
-    lambda inputs: tf.image.resize(inputs[0], tf.shape(inputs[1])[1:3], method='bilinear')
-    )([x_init_ref_fields, x_output])
-    x_output = tf.keras.layers.Concatenate(-1)([x_init_ref_fields_resized, x_output])
-
-
-
-
-    decoder_output, noise_layers = decoder_noise(x_output, num_filters[:-1], 5)
-    # resizing the decoder output
-    decoder_output = res_block_simple(decoder_output, [64], 3, [1, 1], "output_convbbb")
-    # we are predicting log of precipitation
-    output = Lambda(
-    lambda img: tf.image.resize(img, (resize_output[0], resize_output[1]), method='bilinear')
-    )(decoder_output)
-    x_init_ref_fields_high_res_resized = Lambda(
-    lambda x: tf.image.resize(x, (output.shape[1], output.shape[2]), method='bilinear')
-    )(x_init_ref_fields_high_res)
-
-
-
-
-    output = tf.keras.layers.Concatenate(-1)([output, x_init_ref_fields_high_res_resized])
-    output = res_block_simple(output, [64], 3, [1, 1], "output_conv2341")
-    output = tf.keras.layers.Conv2D(32,
-                                    3,
-                                    strides=1,
-                                    padding='same',
-                                    name='custom_precip_layer', activation=tf.keras.layers.LeakyReLU(0.4))(output)
-    output = tf.keras.layers.Conv2D(16,
-                                    3,
-                                    strides=1,
-                                    padding='same',
-                                    name='custom_precip_layerb',
-                                    activation=tf.keras.layers.LeakyReLU(0.4))(output)
-
-    output = tf.keras.layers.Conv2D(num_classes,
-                                    3,
-                                    strides=1,
-                                    padding='same',
-                                    name='custom_precip_layer2', activation='linear')(output)
-
-
-
-
-
-
-
-    input_layers = [noise] + [x, img_input3, img_input4, img_input5, img_input6]
-
-    #generated_residual = self.generator([latent, average, orog_vector, he_vector, vegt_vector, init_prediction],training=training
-
-    model = tf.keras.Model(input_layers, output)
-
-    return model
-
-"""# U-Net"""
-
-def unet(input_size, resize_output, num_filters, num_channels, num_classes, resize=True,
-                   final_activation=tf.keras.layers.LeakyReLU(1)):
-
-
-
-    # المدخلات الثابتة عالية الدقة (3 قنوات مفصولة)
-    high_res_fields = tf.keras.layers.Input(shape=[resize_output[0], resize_output[1], 1], name="static_input_1")
-    high_res_fields2 = tf.keras.layers.Input(shape=[resize_output[0], resize_output[1], 1], name="static_input_2")
-    high_res_fields3 = tf.keras.layers.Input(shape=[resize_output[0], resize_output[1], 1], name="static_input_3")
-
-
-
-    concat_image = tf.keras.layers.Concatenate(-1)([high_res_fields, high_res_fields2, high_res_fields3])
-
-
-    # high
-    concatted_highres = tf.keras.layers.Lambda(
-    lambda x: tf.image.resize(x, [resize_output[0], resize_output[1]], method='bilinear'),
-    output_shape=lambda s: (s[0], resize_output[0], resize_output[1], s[-1])
-    )(concat_image)
-
-    # المدخلات المناخية منخفضة الدقة
-    low_res = tf.keras.layers.Input(shape=[input_size[0], input_size[1], num_channels], name="low_res_input")
-
-
-    # X
-    inputs_abstract = low_res
-
-    # Encoder للمدخلات الثابتة
-    x, temp1 = down_block(concatted_highres, num_filters[0], kernel_size=3, i=0)
-    x, temp2 = down_block(x, num_filters[1], kernel_size=3, i=1)
-    x, temp3 = down_block(x, num_filters[2], kernel_size=3, i=2)
-
-    # Encoder للمدخلات الديناميكية
-    x1 = down_block(inputs_abstract, num_filters[2], kernel_size=3, i=4, use_pool=False) #
-    x1 = tf.keras.layers.AveragePooling2D((2, 2))(x1)
-    x1 = tf.keras.layers.Lambda(
-    lambda inputs: tf.image.resize(inputs[0], tf.shape(inputs[1])[1:3], method='bilinear'),
-    output_shape=lambda shapes: (shapes[1][0], shapes[1][1], shapes[1][2], 128)
-    )([x1, x])
-
-    x = tf.keras.layers.Concatenate(axis=-1)([x1, x])
-
-
-
-
-    # Decoder
-    x = up_block(x, temp3, kernel_size=3, filters=num_filters[2], i=0, concat=False)
-    x = up_block(x, temp2, kernel_size=3, filters=num_filters[1], i=2, concat=False)
-    x = up_block(x, temp1, kernel_size=3, filters=num_filters[0], i=3, concat=False)
-
-    # إعادة إخراج بحجم نهائي
-    x = tf.keras.layers.Lambda(
-        lambda x_tensor: tf.image.resize(x_tensor, (resize_output[0], resize_output[1]), method='bilinear'),
-        output_shape=lambda s: (s[0], resize_output[0], resize_output[1], s[-1])
-    )(x)
-
-    # مرحلة تحسين الإخراج النهائي
-    x = res_block_initial(x, [64], 3, [1, 1], "output_resblock1", sym_padding=True)
-    x = res_block_initial(x, [32], 3, [1, 1], "output_resblock2", sym_padding=True)
-
-    x = SymmetricPadding2D(padding=[1, 1])(x)
-    x = tf.keras.layers.Conv2D(32, 3, activation=final_activation, padding='valid')(x)
-    x = SymmetricPadding2D(padding=[1, 1])(x)
-    x = tf.keras.layers.Conv2D(16, 3, activation=final_activation, padding='valid')(x)
-
-    output = tf.keras.layers.Conv2D(num_classes, 1, activation=final_activation, padding='valid')(x)
-
-    # إخراج نهائي بالدقة الأصلية
-    output = tf.keras.layers.Lambda(
-        lambda x_tensor: tf.image.resize(x_tensor, (resize_output[0], resize_output[1]), method='bilinear'),
-        output_shape=lambda s: (s[0], resize_output[0], resize_output[1], num_classes)
-    )(output)
-
-
-
-
-
-
-   #init_prediction_unet = self.unet([average,orog_vector, he_vector, vegt_vector], training=True) الترتيب حسب الادخال
-    # بناء النموذج
-    unet_model = tf.keras.models.Model(
-        inputs=[low_res, high_res_fields, high_res_fields2, high_res_fields3],
-        outputs=output,
-        name='unet'
-    )
-
-    return unet_model
-
+# Model architecture details are intentionally omitted because this work is part of an unpublished research project.
+# The full implementation will be made available after publication or upon authorized request.
 #Models Components :
 
 #discriminator
@@ -1043,406 +464,6 @@ def generator_loss(fake_img):
 
 
 
-class WGAN_Cascaded_Residual_IP_CC_pres(keras.Model):
-
-
-
-    def __init__(self, discriminator, generator, latent_dim,
-                 discriminator_extra_steps=discrim_steps, gp_weight=gp_weight, ad_loss_factor=ad_loss,
-                 orog=None, he=None,
-                 vegt=None, unet=None, train_unet=True, intensity_weight=intensity_weight):
-        super(WGAN_Cascaded_Residual_IP_CC_pres, self).__init__()
-
-        self.discriminator = discriminator
-        self.generator = generator
-        self.latent_dim = latent_dim
-        self.d_steps = discriminator_extra_steps
-        self.gp_weight = gp_weight
-        self.ad_loss_factor = ad_loss_factor
-        self.orog = orog
-        self.he = he
-        self.vegt = vegt
-        self.unet = unet
-        self.train_unet = train_unet
-        self.intensity_weight = intensity_weight
-
-
-    def compile(self, d_optimizer, g_optimizer, d_loss_fn,
-                g_loss_fn, u_loss_fn, u_optimizer):
-        super(WGAN_Cascaded_Residual_IP_CC_pres, self).compile()
-        self.d_optimizer = d_optimizer
-        self.g_optimizer = g_optimizer
-        self.d_loss_fn = d_loss_fn
-        self.g_loss_fn = g_loss_fn
-        self.u_loss_fn = u_loss_fn
-        self.u_optimizer = u_optimizer
-
-
-
-
-
-
-
-
-
-    def gradient_penalty(self, batch_size, real_images, fake_images, average, orog_vector, he_vector, vegt_vector,
-                         unet_preds):
-
-
-        # Get the interpolated image
-        alpha = tf.random.normal([batch_size, 1, 1, 1], 0.0, 1.0)
-        diff = fake_images - real_images
-        interpolated = real_images + alpha * diff
-
-        with tf.GradientTape() as gp_tape:
-            gp_tape.watch(interpolated)
-            pred = self.discriminator([interpolated, average, orog_vector, he_vector, vegt_vector, unet_preds],
-                                      training=True)
-
-        grads = gp_tape.gradient(pred, [interpolated])[0]
-        norm = tf.sqrt(tf.reduce_sum(tf.square(grads), axis=[1, 2, 3]))
-        gp = tf.reduce_mean((norm - 1.0) ** 2)
-        return gp
-
-
-
-
-
-
-
-
-
-    @staticmethod
-    def expand_conditional_inputs(X, batch_size):
-        expanded_image = tf.expand_dims(X, axis=0)  # Shape: (1, 172, 179)
-
-        # Repeat the image to match the desired batch size
-        expanded_image = tf.repeat(expanded_image, repeats=batch_size, axis=0)  # Shape: (batch_size, 172, 179)
-
-        # Create a new axis (1) on the last axis
-        expanded_image = tf.expand_dims(expanded_image, axis=-1)
-        return expanded_image
-
-
-
-
-
-
-
-
-
-
-
-    def d_step(self, real_images,real_images_future, batch_size, average, average_future, orog_vector, he_vector, vegt_vector):
-        random_latent_vectors = tf.random.normal(
-            shape=(batch_size,) + self.latent_dim[0]
-        )
-
-        with tf.GradientTape() as tape:
-            init_prediction_unet = self.unet([average,
-                                              orog_vector, he_vector, vegt_vector], training=True)
-            init_prediction_unet_future = self.unet([average_future,
-                                              orog_vector, he_vector, vegt_vector], training=True)
-            residual_gt = (real_images - init_prediction_unet)
-            residual_gt_future = (real_images_future - init_prediction_unet_future)
-            init_prediction = init_prediction_unet
-            # crete fake residuals (these are residual by default)
-            fake_images = self.generator([random_latent_vectors, average,
-                                          orog_vector, he_vector, vegt_vector, init_prediction], training=True)
-
-            fake_images_future = self.generator([random_latent_vectors, average_future,
-                                          orog_vector, he_vector, vegt_vector, init_prediction_unet_future], training=True)
-
-            fake_logits = self.discriminator(
-            [fake_images, average, orog_vector, he_vector, vegt_vector, init_prediction], training=True)
-
-
-            fake_logits_future = self.discriminator(
-                [fake_images_future, average_future, orog_vector, he_vector, vegt_vector, init_prediction_unet_future], training=True)
-            # Get the logits for the real images
-            real_logits = self.discriminator(
-                [residual_gt, average, orog_vector, he_vector, vegt_vector, init_prediction], training=True)
-            real_logits_future = self.discriminator(
-                [residual_gt_future, average_future, orog_vector, he_vector, vegt_vector, init_prediction_unet_future], training=True)
-            # Calculate the discriminator loss using the fake and real image logits
-            d_cost = self.d_loss_fn(real_img=real_logits, fake_img=fake_logits)
-            d_cost_future = self.d_loss_fn(real_img=real_logits_future, fake_img=fake_logits_future)
-            # Calculate the gradient penalty
-            gp = self.gradient_penalty(batch_size, residual_gt, fake_images, average, orog_vector, he_vector,
-                                       vegt_vector, init_prediction)
-            gp_future = self.gradient_penalty(batch_size, residual_gt_future, fake_images_future, average_future, orog_vector, he_vector,
-                                       vegt_vector, init_prediction_unet_future)
-
-            # Add the gradient penalty to the original discriminator loss
-            d_loss = 0.5 * (d_cost + d_cost_future) + 0.5 * (gp + gp_future) * self.gp_weight
-
-        # Get the gradients w.r.t the discriminator loss
-        d_gradient = tape.gradient(d_loss, self.discriminator.trainable_variables)
-        # Update the weights of the discriminator using the discriminator optimizer
-        self.d_optimizer.apply_gradients(zip(d_gradient, self.discriminator.trainable_variables))
-        return d_loss, d_gradient, d_loss, fake_images, fake_logits, init_prediction, residual_gt, init_prediction, random_latent_vectors
-
-
-
-
-
-
-
-
-
-
-    def g_step(self, real_images, real_images_future, random_latent_vectors, average, average_future, orog_vector, he_vector, vegt_vector):
-
-        with tf.GradientTape() as tape:
-            # Generate fake images using the generator
-            init_prediction_unet = self.unet([average,
-                                              orog_vector, he_vector, vegt_vector], training=True)
-            init_prediction_unet_future = self.unet([average_future,
-                                              orog_vector, he_vector, vegt_vector], training=True)
-
-            init_prediction = init_prediction_unet
-            # compute ground truth residuals
-            residual_gt = (real_images - init_prediction_unet)
-            residual_gt_future = (real_images_future - init_prediction_unet_future)
-            generated_images_v1 = self.generator(
-                [random_latent_vectors, average, orog_vector, he_vector, vegt_vector, init_prediction], training=True)
-            generated_images_future = self.generator(
-                [random_latent_vectors, average_future, orog_vector, he_vector, vegt_vector, init_prediction_unet_future], training=True)
-            generated_images = generated_images_v1
-
-            gen_img_logits = self.discriminator([generated_images, average, orog_vector, he_vector, vegt_vector, init_prediction], training=True)
-
-            gen_img_logits_future = self.discriminator(
-                [generated_images_future, average_future, orog_vector, he_vector, vegt_vector, init_prediction_unet_future], training=True)
-
-
-
-            # compute the content loss or the MSE, this is the errors in the residuals
-            mse_fn = tf.keras.losses.MeanSquaredError()
-            mse = mse_fn(residual_gt, generated_images_v1)
-            mse_future = mse_fn(residual_gt_future, generated_images_future)
-
-
-
-            # compute the "true" error.
-            mse_fn = tf.keras.losses.MeanSquaredError()
-
-            gan_mse = mse_fn(real_images, generated_images_v1 + init_prediction_unet)
-
-
-
-            # compute the intensity on the batch across each individual timestep (not the 0th dimension)
-            gamma_loss_func = mse
-
-            maximum_intensity = tf.math.reduce_max(
-                real_images, axis=[-1, -2, -3])
-            maximum_intensity_predicted = tf.math.reduce_max(generated_images_v1 + init_prediction_unet,
-                                                             axis=[-1, -2, -3])   #           يعني ياخذ اقصى قيمة حسب الطول والعرض والقناة (هطول)       يعني اقصى رصد في الباتش
-
-
-            average_intensity = tf.math.reduce_mean(
-                real_images, axis=[-1, -4])
-            average_intensity_predicted = tf.math.reduce_mean(generated_images_v1 + init_prediction_unet,
-                                                              axis=[-1, -4])  #         ياخذ المتوسط غبر الزمن والقناة (هطول)     يعني متوسط الهطول لكل الباتش
-
-
-
-            maximum_intensity_future = tf.math.reduce_max(
-                real_images_future, axis=[-1, -2, -3])
-            maximum_intensity_predicted_future = tf.math.reduce_max(generated_images_future + init_prediction_unet_future,
-                                                             axis=[-1, -2, -3])
-
-
-
-            average_intensity_future = tf.math.reduce_mean(
-                real_images_future, axis=[-1, -4])
-            average_intensity_predicted_future = tf.math.reduce_mean(generated_images_future + init_prediction_unet_future,
-                                                              axis=[-1, -4])
-
-
-            adv_loss = self.ad_loss_factor * self.g_loss_fn(gen_img_logits)
-            adv_loss_future = self.ad_loss_factor * self.g_loss_fn(gen_img_logits_future)
-
-
-            g_loss = 0.5 * (adv_loss + adv_loss_future + gamma_loss_func + mse_future) + 0.5 * self.intensity_weight * (tf.reduce_mean(
-                tf.abs(average_intensity - average_intensity_predicted)) ** 2 +tf.reduce_mean(
-                tf.abs(average_intensity_future - average_intensity_predicted_future)) ** 2) + 0.5 * self.intensity_weight * (tf.reduce_mean(
-                tf.abs(maximum_intensity - maximum_intensity_predicted)) ** 2 +tf.reduce_mean(
-                tf.abs(maximum_intensity_predicted_future - maximum_intensity_future)) ** 2)
-
-
-        # Get the gradients w.r.t the generator loss
-        gen_gradient = tape.gradient(g_loss, self.generator.trainable_variables)
-        # Update the weights of the generator using the generator optimizer
-        self.g_optimizer.apply_gradients(zip(gen_gradient, self.generator.trainable_variables))
-        return gen_gradient, g_loss, adv_loss, gamma_loss_func, gan_mse, mse
-
-
-
-
-
-
-
-
-
-    def train_step(self, real_images):
-        output_vars, averages = real_images
-
-        average = averages["X"]
-        average_future = averages["X_future"]
-
-        if len(average.shape) == 3:
-           average = tf.expand_dims(average, axis=-1)
-
-        if len(average_future.shape) == 3:
-          average_future = tf.expand_dims(average_future, axis=-1)
-
-        real_images_tasmin_f = tf.expand_dims(output_vars['tasmin_future'], axis =-1)
-        real_images_tasmin = tf.expand_dims(output_vars['tasmin'], axis =-1)
-
-
-        batch_size = tf.shape(real_images_tasmin)[0]
-        orog_vector = self.expand_conditional_inputs(self.orog, batch_size)
-        he_vector = self.expand_conditional_inputs(self.he, batch_size)
-        vegt_vector = self.expand_conditional_inputs(self.vegt, batch_size)
-
-
-
-        if self.train_unet:
-            with tf.GradientTape() as tape:
-                random_latent_vectors = tf.random.normal(
-                    shape=(batch_size,) + self.latent_dim[0]
-                )
-
-                init_prediction = self.unet([average,
-                                             orog_vector, he_vector, vegt_vector], training=True)
-                init_prediction_future = self.unet([average_future,
-                                             orog_vector, he_vector, vegt_vector], training=True)
-                mse_unet = self.u_loss_fn(real_images_tasmin, init_prediction)
-                mse_unet_future = self.u_loss_fn(real_images_tasmin_f, init_prediction_future)
-                mse_total = 0.5 * (mse_unet + mse_unet_future)
-            u_gradient = tape.gradient(mse_total, self.unet.trainable_variables)
-
-
-
-
-
-            # Update the weights of the generator using the generator optimizer
-            self.u_optimizer.apply_gradients(zip(u_gradient, self.unet.trainable_variables))
-
-        for i in range(self.d_steps):
-            d_loss, d_gradient, d_loss, fake_images, fake_logits, init_prediction, \
-            residual_gt, init_prediction, random_latent_vectors = self.d_step(
-            real_images_tasmin, real_images_tasmin_f,
-            batch_size, average, average_future,
-            orog_vector, he_vector, vegt_vector
-    )
-
-# generator step
-
-            gen_gradient, g_loss, adv_loss, gamma_loss_func, gan_mse, mse = self.g_step(
-            real_images_tasmin, real_images_tasmin_f,
-            random_latent_vectors, average, average_future,
-            orog_vector, he_vector, vegt_vector
-)
-
-        return {"d_loss": d_loss, "g_loss": g_loss, "residual_loss": gamma_loss_func, "adv_loss": adv_loss,
-                "unet_loss": mse_unet, "gan_mse": gan_mse}
-
-
-
-
-
-
-
-
-
-
-    def predict_on_batch(self, real_batch, avg_batch):
-
-        average = avg_batch["X"]
-        average_future = avg_batch["X_future"]
-
-        if len(average.shape) == 3:
-            average = tf.expand_dims(average, axis=-1)
-        if len(average_future.shape) == 3:
-            average_future = tf.expand_dims(average_future, axis=-1)
-
-        real_images = tf.expand_dims(real_batch["tasmin"], axis=-1)
-        real_images_future = tf.expand_dims(real_batch["tasmin_future"], axis=-1)
-
-        batch_size = tf.shape(real_images)[0]
-
-        # المتغيرات الثابتة (orog, he, vegt) بعد التوسيع
-        orog_vector = self.expand_conditional_inputs(self.orog, batch_size)
-        he_vector = self.expand_conditional_inputs(self.he, batch_size)
-        vegt_vector = self.expand_conditional_inputs(self.vegt, batch_size)
-
-        # توقع من UNet
-        init_prediction = self.unet([average, orog_vector, he_vector, vegt_vector], training=False)
-        init_prediction_future = self.unet([average_future, orog_vector, he_vector, vegt_vector], training=False)
-
-        # توقع الفروقات باستخدام Generator
-        random_latent_vectors = tf.random.normal(shape=(batch_size,) + self.latent_dim[0])
-        generated_residual = self.generator(
-            [random_latent_vectors, average, orog_vector, he_vector, vegt_vector, init_prediction],
-            training=False
-        )
-
-        generated_residual_future = self.generator(
-            [random_latent_vectors, average_future, orog_vector, he_vector, vegt_vector, init_prediction_future],
-            training=False
-        )
-
-        # التوقع النهائي
-        generated_output = init_prediction + generated_residual
-        generated_output_future = init_prediction_future + generated_residual_future
-
-        return {
-            "real": real_images,
-            "real_future": real_images_future,
-            "init": init_prediction,
-            "init_future" : init_prediction_future,
-            "generated_residual" : generated_residual,
-            "generated_residual_future" : generated_residual_future,
-            "generated": generated_output,
-            "generated_future": generated_output_future
-        }
-
-
-
-
-
-
-
-
-
-    def call(self, inputs, training=False):
-
-        real_batch, avg_batch = inputs
-
-        average = avg_batch["X"]
-        average_future = avg_batch["X_future"]
-
-        if len(average.shape) == 3:
-            average = tf.expand_dims(average, axis=-1)
-        if len(average_future.shape) == 3:
-            average_future = tf.expand_dims(average_future, axis=-1)
-
-        batch_size = tf.shape(average)[0]
-        orog_vector = self.expand_conditional_inputs(self.orog, batch_size)
-        he_vector = self.expand_conditional_inputs(self.he, batch_size)
-        vegt_vector = self.expand_conditional_inputs(self.vegt, batch_size)
-
-        init_prediction = self.unet([average, orog_vector, he_vector, vegt_vector], training=training)
-        latent = tf.random.normal(shape=(batch_size,) + self.latent_dim[0])
-        generated_residual = self.generator(
-            [latent, average, orog_vector, he_vector, vegt_vector, init_prediction],
-            training=training
-        )
-
-        output = init_prediction + generated_residual
-        return output
 
 """# Compile"""
 
@@ -1534,8 +555,6 @@ for metric in ['g_loss', 'd_loss', 'unet_loss', 'gan_mse']:
 #unet_model.load_weights("unet.weights.h5")
 #discriminator.load_weights("discriminator.weights.h5")
 
-# تجميع كل النتائج لكل مفتاح
-#للتدريب
 merged_results_train = {}
 for key in results_list_train[0]:
     merged_results_train[key] = tf.concat([res[key] for res in results_list_train], axis=0)
@@ -1543,14 +562,10 @@ for key in results_list_train[0]:
 #للتدريب
 for key, value in merged_results_train.items():
     print(f"{key} → shape: {value.shape}, dtype: {value.dtype}")
-
-#للتدريب
 import numpy as np
-#دالة فك التحويل  اللي اجريته على البيانات قبل التدرييب
 def undo_log_transform(x):
     return np.exp(x) - 0.001
 
-# حولهم من Tensors إلى numpy ثم فك اللوغاريثم
 generated_real = undo_log_transform(merged_results_train["generated"].numpy())
 real_real = undo_log_transform(merged_results_train["real"].numpy())
 init_real = undo_log_transform(merged_results_train["init"].numpy())
@@ -1588,7 +603,6 @@ init_combined_train = np.concatenate([init_real, init_future], axis=0)
 # ✅ 3. توليد تواريخ مناسبة
 dates_combined_train = pd.date_range("1996-01-01", periods=real_combined_train.shape[0], freq='D')
 
-# ✅ 4. تحويل النتائج إلى Xarray DataArray
 Y_train_real_xr = xr.DataArray(real_combined_train.squeeze(), dims=["time", "lat", "lon"], coords={"time": dates_combined_train})
 Y_train_pred_xr = xr.DataArray(generated_combined_train.squeeze(), dims=["time", "lat", "lon"], coords={"time": dates_combined_train})
 Y_train_unet_xr = xr.DataArray(init_combined_train.squeeze(), dims=["time", "lat", "lon"], coords={"time": dates_combined_train})
@@ -1603,7 +617,6 @@ real_plot = undo_log_transform(merged_results_train["real"].numpy()[i, ..., 0])
 init_plot = undo_log_transform(merged_results_train["init"].numpy()[i, ..., 0])
 generated_plot = undo_log_transform(merged_results_train["generated"].numpy()[i, ..., 0])
 
-# نحدد نطاق بصري واضح – مثلاً 0 إلى 10 mm/day
 vmin, vmax = 0, 20 # المدى لاستعراض قيم الهطول
 cmap = "YlGnBu"  # تدرج لطيف وواضح للبيانات المطرية
 
@@ -1634,8 +647,6 @@ import seaborn as sns
 import pandas as pd
 
 
-# ===============================================================
-# ✅ الجزء 1: رسم هيستوغرام التوزيع
 bins = np.arange(0, 500, 10)
 
 fig, ax = plt.subplots(figsize=(8, 5))
@@ -1650,7 +661,7 @@ plt.tight_layout()
 plt.show()
 
 # ===============================================================
-# ✅ الجزء 2: RX1Day = أعلى قيمة لكل نقطة خلال السنة
+# الجزء 2: RX1Day = أعلى قيمة لكل نقطة خلال السنة
 rx1day_test = Y_train_real_xr.max("time")
 rx1day_unet = Y_train_unet_xr.max("time")
 rx1day_pred = Y_train_pred_xr.max("time")
@@ -1666,7 +677,7 @@ plt.tight_layout()
 plt.show()
 
 # ===============================================================
-# ✅ الجزء 3: خرائط Quantile (q90, q95, q99)
+#  الجزء 3: خرائط Quantile (q90, q95, q99)
 quantiles = [0.9, 0.95, 0.99]
 
 for q in quantiles:
@@ -1692,7 +703,7 @@ import xarray as xr
 
 
 # ============================
-# 1️⃣ MAE في DJF و JJA
+# 1️MAE في DJF و JJA
 # ============================
 
 def seasonal_mae(y_true, y_pred, season):
@@ -1707,7 +718,7 @@ mae_djf_gan = seasonal_mae(Y_train_real_xr, Y_train_pred_xr, "DJF")
 mae_jja_gan = seasonal_mae(Y_train_real_xr, Y_train_pred_xr, "JJA")
 
 # =============================
-# 2️⃣ RX1Day (سنوي)
+# 2️ RX1Day (سنوي)
 # =============================
 
 
@@ -1721,7 +732,7 @@ mae_rx1_unet = rx1day_mae(Y_train_real_xr, Y_train_unet_xr)
 mae_rx1_gan = rx1day_mae(Y_train_real_xr, Y_train_pred_xr)
 
 # =============================
-# 3️⃣ CDD (جفاف متتالي)
+# 3️ CDD (جفاف متتالي)
 # =============================
 
 def compute_cdd_1d(arr, threshold=1.0):
@@ -1756,9 +767,7 @@ cdd_gan = calc_cdd_annual(Y_train_pred_xr)
 mae_cdd_unet = np.abs(cdd_true - cdd_unet).mean().item()
 mae_cdd_gan = np.abs(cdd_true - cdd_gan).mean().item()
 
-# =============================
-# ✅ طباعة النتائج
-# =============================
+
 print("📊 MAE القيم الموسمية:")
 print(f"🔹 DJF - UNet = {mae_djf_unet:.3f} mm/day\t| GAN = {mae_djf_gan:.3f} mm/day")
 print(f"🔹 JJA - UNet = {mae_jja_unet:.3f} mm/day\t| GAN = {mae_jja_gan:.3f} mm/day\n")
@@ -1767,22 +776,19 @@ print("📊 MAE مؤشرات التطرف:")
 print(f"🔹 RX1Day     - UNet = {mae_rx1_unet:.3f} mm\t| GAN = {mae_rx1_gan:.3f} mm")
 print(f"🔹 CDD (days) - UNet = {mae_cdd_unet:.3f} days\t| GAN = {mae_cdd_gan:.3f} days")
 
-# ✅ Temporal Variability Ratio (σr)
+# temporal Variability Ratio (σr)
 
-# ⚙️ حساب الانحراف المعياري الزمني
 std_test = Y_train_real_xr.std(dim="time")      # الحقيقة
 std_unet = Y_train_unet_xr.std(dim="time")      # UNet
 std_gan = Y_train_pred_xr.std(dim="time")       # GAN
 
-# ⚙️ النسبة لكل نقطة
 sigma_r_unet_map = 100 * (std_unet / std_test)
 sigma_r_gan_map = 100 * (std_gan / std_test)
 
-# ✅ المتوسط على كامل الخريطة
 sigma_r_unet = sigma_r_unet_map.mean().item()
 sigma_r_gan = sigma_r_gan_map.mean().item()
 
-# ✅ طباعة النتائج
+# طباعة النتائج
 print(f"σr (UNet vs Ground Truth) = {sigma_r_unet:.2f}%")
 print(f"σr (GAN vs Ground Truth)  = {sigma_r_gan:.2f}%")
 
@@ -1821,11 +827,10 @@ def compute_LHD(Y_true, Y_pred, bin_min=1, bin_max=1050, bin_width=20):
 
 
 
-# ✅ حساب LHD لليونت و GAN
+#  حساب LHD لليونت و GAN
 LHD_unet = compute_LHD(real_combined_train, init_combined_train)
 LHD_gan  = compute_LHD(real_combined_train, generated_combined_train)
 
-# ✅ طباعة النتائج
 print(f"LHD (UNet vs Truth) = {LHD_unet:.3f} dB")
 print(f"LHD (GAN  vs Truth) = {LHD_gan:.3f} dB")
 
@@ -1891,8 +896,8 @@ X2 = X2.transpose("time", "lat", "lon", "channel")
 X2 = X2.values.astype("float32")
 
 # عرض الشكل للتأكيد
-print("✅ X shape:", X2.shape)
-print("📦 المتغيرات المستخدمة:")
+print(" X shape:", X2.shape)
+print(" المتغيرات المستخدمة:")
 for var in selected_vars:
     print("-", var)
 
@@ -1927,22 +932,20 @@ print("✅ Y shape:", Y2.shape)
 
 
 
-# ✅ تأكد أن T زوجي
+# تأكد أن T زوجي
 T = X2.shape[0] - (X2.shape[0] % 2)
 half = T // 2
 
-# ✅ تقسيم البيانات زمنياً
 X_now2 = X2[:half][::-1]             # عكس زمني للفترة الأولى
 X_future2 = X2[half:2*half]          # الفترة المستقبلية
 
 tasmin2 = Y2[:half][::-1]
 tasmin_future2 = Y2[half:2*half]
 
-# ✅ استخراج التواريخ المقابلة من xarray dataset الأصلي
 # تأكدي من اسم المتغير الذي يحتوي xarray، مثلاً ds أو X2_dataset
 test_dates = pd.to_datetime(predictors_data2.time.values[:half][::-1])
 
-# ✅ تنظيم القواميس
+# تنظيم القواميس
 real_images2_dict = {
     'tasmin': tasmin2,
     'tasmin_future': tasmin_future2
@@ -1953,7 +956,6 @@ averages2_dict = {
     'X_future': X_future2
 }
 
-# ✅ إنشاء tf.data.Dataset
 test_dataset = tf.data.Dataset.from_tensor_slices((real_images2_dict, averages2_dict)).batch(16).prefetch(tf.data.AUTOTUNE)
 
 results_list_test = []
@@ -1993,20 +995,16 @@ init_future2 = undo_log_transform(merged_results_test["init_future"].numpy())
 
 """# Reconstruction after Temporal Reversal (test data)"""
 
-# ✅ 1- عكسي الحاضر قبل الدمج
 real_real2 = real_real2[::-1]
 generated_real2 = generated_real2[::-1]
 init_real2 = init_real2[::-1]
 
-# ✅ 2- دمج الحاضر والمستقبل
 real_combined = np.concatenate([real_real2, real_real_future2], axis=0)
 generated_combined = np.concatenate([generated_real2, generated_real_future2], axis=0)
 init_combined = np.concatenate([init_real2, init_future2], axis=0)
 
-# ✅ 3- توليد التواريخ المناسبة
 dates_combined = pd.date_range("2008-01-01", periods=real_combined.shape[0], freq='D')
 
-# ✅ 4- بناء Xarray
 Y_test_xr2 = xr.DataArray(real_combined.squeeze(), dims=["time", "lat", "lon"], coords={"time": dates_combined})
 Y_pred_xr2 = xr.DataArray(generated_combined.squeeze(), dims=["time", "lat", "lon"], coords={"time": dates_combined})
 Y_unet_xr2 = xr.DataArray(init_combined.squeeze(), dims=["time", "lat", "lon"], coords={"time": dates_combined})
@@ -2052,8 +1050,6 @@ import seaborn as sns
 import pandas as pd
 
 
-# ===============================================================
-# ✅ الجزء 1: رسم هيستوغرام التوزيع
 bins = np.arange(0, 500, 10)
 
 fig, ax = plt.subplots(figsize=(8, 5))
@@ -2067,8 +1063,6 @@ ax.legend()
 plt.tight_layout()
 plt.show()
 
-# ===============================================================
-# ✅ الجزء 2: RX1Day = أعلى قيمة لكل نقطة خلال السنة
 rx1day_test = Y_test_xr2.max("time")
 rx1day_unet = Y_unet_xr2.max("time")
 rx1day_pred = Y_pred_xr2.max("time")
@@ -2083,8 +1077,6 @@ ax[2].set_title("RX1Day - GAN Prediction")
 plt.tight_layout()
 plt.show()
 
-# ===============================================================
-# ✅ الجزء 3: خرائط Quantile (q90, q95, q99)
 quantiles = [0.9, 0.95, 0.99]
 
 for q in quantiles:
@@ -2109,9 +1101,6 @@ import xarray as xr
 
 
 
-# ============================
-# 1️⃣ MAE في DJF و JJA
-# ============================
 
 def seasonal_mae(y_true, y_pred, season):
     true = y_true.sel(time=y_true['time.season'] == season).mean("time")
@@ -2124,9 +1113,6 @@ mae_jja_unet = seasonal_mae(Y_test_xr2, Y_unet_xr2, "JJA")
 mae_djf_gan = seasonal_mae(Y_test_xr2, Y_pred_xr2, "DJF")
 mae_jja_gan = seasonal_mae(Y_test_xr2, Y_pred_xr2, "JJA")
 
-# =============================
-# 2️⃣ RX1Day (سنوي)
-# =============================
 
 def rx1day_mae(y_true, y_pred):
     rx1_true = y_true.resample(time="1YE").max("time")
@@ -2136,9 +1122,7 @@ def rx1day_mae(y_true, y_pred):
 mae_rx1_unet = rx1day_mae(Y_test_xr2, Y_unet_xr2)
 mae_rx1_gan = rx1day_mae(Y_test_xr2, Y_pred_xr2)
 
-# =============================
-# 3️⃣ CDD (جفاف متتالي)
-# =============================
+
 
 def compute_cdd_1d(arr, threshold=1.0):
     is_dry = arr < threshold
@@ -2172,9 +1156,7 @@ cdd_gan = calc_cdd_annual(Y_pred_xr2)
 mae_cdd_unet = np.abs(cdd_true - cdd_unet).mean().item()
 mae_cdd_gan = np.abs(cdd_true - cdd_gan).mean().item()
 
-# =============================
-# ✅ طباعة النتائج
-# =============================
+
 print("📊 MAE القيم الموسمية:")
 print(f"🔹 DJF - UNet = {mae_djf_unet:.3f} mm/day\t| GAN = {mae_djf_gan:.3f} mm/day")
 print(f"🔹 JJA - UNet = {mae_jja_unet:.3f} mm/day\t| GAN = {mae_jja_gan:.3f} mm/day\n")
@@ -2183,22 +1165,17 @@ print("📊 MAE مؤشرات التطرف:")
 print(f"🔹 RX1Day     - UNet = {mae_rx1_unet:.3f} mm\t| GAN = {mae_rx1_gan:.3f} mm")
 print(f"🔹 CDD (days) - UNet = {mae_cdd_unet:.3f} days\t| GAN = {mae_cdd_gan:.3f} days")
 
-# ✅ Temporal Variability Ratio (σr)
 
-# ⚙️ حساب الانحراف المعياري الزمني
 std_test = Y_test_xr2.std(dim="time")      # الحقيقة
 std_unet = Y_unet_xr2.std(dim="time")      # UNet
 std_gan = Y_pred_xr2.std(dim="time")       # GAN
 
-# ⚙️ النسبة لكل نقطة
 sigma_r_unet_map = 100 * (std_unet / std_test)
 sigma_r_gan_map = 100 * (std_gan / std_test)
 
-# ✅ المتوسط على كامل الخريطة
 sigma_r_unet = sigma_r_unet_map.mean().item()
 sigma_r_gan = sigma_r_gan_map.mean().item()
 
-# ✅ طباعة النتائج
 print(f"σr (UNet vs Ground Truth) = {sigma_r_unet:.2f}%")
 print(f"σr (GAN vs Ground Truth)  = {sigma_r_gan:.2f}%")
 
@@ -2238,11 +1215,11 @@ def compute_LHD(Y_true, Y_pred, bin_min=1, bin_max=1050, bin_width=20):
 
 
 
-# ✅ حساب LHD لليونت و GAN
+#  حساب LHD لليونت و GAN
 LHD_unet = compute_LHD(real_combined, init_combined)
 LHD_gan  = compute_LHD(real_combined, generated_combined)
 
-# ✅ طباعة النتائج
+#  طباعة النتائج
 print(f"LHD (UNet vs Truth) = {LHD_unet:.3f} dB")
 print(f"LHD (GAN  vs Truth) = {LHD_gan:.3f} dB")
 
@@ -2260,7 +1237,6 @@ y_true = flatten_and_clean(real_combined)
 y_pred_unet = flatten_and_clean(init_combined)
 y_pred_gan = flatten_and_clean(generated_combined)
 
-# ========== المقاييس ==========
 def compute_metrics(y_true, y_pred):
     mae = mean_absolute_error(y_true, y_pred)
     mse = mean_squared_error(y_true, y_pred)
@@ -2271,7 +1247,6 @@ def compute_metrics(y_true, y_pred):
 mae_u, mse_u, rmse_u, r2_u = compute_metrics(y_true, y_pred_unet)
 mae_g, mse_g, rmse_g, r2_g = compute_metrics(y_true, y_pred_gan)
 
-# ========== LHD ==========
 def compute_LHD(y_true, y_pred, bin_min=1, bin_max=1050, bin_width=20):
     y_true = y_true[y_true > 1]
     y_pred = y_pred[y_pred > 1]
@@ -2288,7 +1263,6 @@ def compute_LHD(y_true, y_pred, bin_min=1, bin_max=1050, bin_width=20):
 lhd_unet = compute_LHD(y_true, y_pred_unet)
 lhd_gan = compute_LHD(y_true, y_pred_gan)
 
-# ========== σr ==========
 def compute_sigma_r(y_true_3d, y_pred_3d):
     std_true = np.std(y_true_3d, axis=0)
     std_pred = np.std(y_pred_3d, axis=0)
@@ -2298,7 +1272,6 @@ def compute_sigma_r(y_true_3d, y_pred_3d):
 sigma_r_u = compute_sigma_r(real_combined, init_combined)
 sigma_r_g = compute_sigma_r(real_combined, generated_combined)
 
-# ========== عرض النتائج ==========
 print(f"🔷 UNet:")
 print(f" - R²:   {r2_u:.3f}")
 print(f" - MAE:  {mae_u:.3f}")
@@ -2321,7 +1294,6 @@ import tensorflow as tf
 from tensorflow.keras.models import Model
 import tensorflow.keras.backend as K
 
-# ====== 1. تجهيز عينة واحدة من بيانات الاختبار ======
 
 x_input_sample = [
     X_now2[10:11],         # tasmin الآن (low-res input)    #[i:i+1]
@@ -2330,10 +1302,8 @@ x_input_sample = [
     vegt[None, ...],     # vegetation (static)
 ]
 
-# ====== 2. تحديد الطبقة المستهدفة داخل UNet ======
 target_layer_name = "output_resblock2_2"  # غيّري الاسم حسب الطبقة اللي تبين تراقبيها
 
-# ====== 3. دالة Grad-CAM ======
 def get_gradcam_heatmap(model, input_data, target_layer_name):
     grad_model = Model(
         inputs=model.inputs,
@@ -2357,14 +1327,10 @@ def get_gradcam_heatmap(model, input_data, target_layer_name):
 
 
 
-# ====== 4. حساب الخريطة الحرارية ======
 heatmap = get_gradcam_heatmap(unet_model, x_input_sample, target_layer_name)
 
-# ====== 5. عرض النتيجة ======
-# 🔹 استرجاع خريطة التنبؤ (بعد تطبيق النموذج على العينة)
 y_pred_map = unet_model.predict(x_input_sample)[0, :, :, 0]
 
-# 🔹 التأكد من مطابقة أبعاد Grad-CAM لخريطة التنبؤ
 if heatmap.shape != y_pred_map.shape:
     from skimage.transform import resize
     heatmap_resized = resize(heatmap, y_pred_map.shape, mode='reflect', anti_aliasing=True)
@@ -2399,14 +1365,13 @@ import tensorflow as tf
 import imageio.v2 as imageio
 from skimage.transform import resize
 
-# ⚙️ إعدادات التخزين
 save_dir = "gradcam_test_frames"
 os.makedirs(save_dir, exist_ok=True)
 
 # عدد عينات الاختبار
 n_samples = X2.shape[0]
 
-# 🌀 توليد الصور لكل عينة
+# توليد الصور لكل عينة
 for i in range(n_samples):
     print(f"🔍 Processing test sample {i+1}/{n_samples}...")
 
@@ -2418,24 +1383,22 @@ for i in range(n_samples):
         vegt[None, ...],
     ]
 
-    # 🎯 Grad-CAM
+#grad cam
     heatmap = get_gradcam_heatmap(unet_model, x_sample, target_layer_name="output_resblock2_2")
 
-    # 🧠 توقع النموذج
     y_pred = unet_model.predict(x_sample)[0, :, :, 0]
 
-    # ✅ التأكد من تطابق الأبعاد
+    # التأكد من تطابق الأبعاد
     if heatmap.shape != y_pred.shape:
         heatmap_resized = resize(heatmap, y_pred.shape, mode='reflect', anti_aliasing=True)
     else:
         heatmap_resized = heatmap
 
-    # 📆 تحديد التاريخ (اختياري)
+    # تحديد التاريخ (اختياري)
     date_str = f"Timestep {i+1}"
     if 'X2_dates' in locals() and len(X2_dates) > i:
         date_str = X2_dates[i].strftime('%Y-%m-%d')
 
-    # 🖼️ رسم الخريطة
     fig, axes = plt.subplots(1, 2, figsize=(12, 5))
 
     im1 = axes[0].imshow(y_pred, cmap="Blues")
@@ -2451,7 +1414,6 @@ for i in range(n_samples):
     plt.savefig(f"{save_dir}/test_frame_{i:03d}.png")
     plt.close()
 
-# ✅ حفظ الفيديو كـ GIF
 print("🎞️ Saving animated GIF...")
 images = [imageio.imread(f"{save_dir}/test_frame_{i:03d}.png") for i in range(n_samples)]
 imageio.mimsave("gradcam_test_timelapse.gif", images, fps=5)
