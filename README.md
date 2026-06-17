@@ -16,7 +16,7 @@ This graduation project focuses on climate data analysis and model evaluation fo
 - Applied interpretability analysis using Explainable AI to examine model focus over extreme-event regions and validate whether learned spatial patterns were climatologically meaningful.
 - Integrated static climate-related features to inform the learning process with physical and geographical factors affecting precipitation.
 
-## Technologies
+## Tools & Techniques
 
 ![Python](https://img.shields.io/badge/Python-3776AB?style=flat-square&logo=python&logoColor=white)
 ![Climate Data Analysis](https://img.shields.io/badge/Climate%20Data%20Analysis-111827?style=flat-square)
