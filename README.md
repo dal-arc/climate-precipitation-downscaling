@@ -25,6 +25,11 @@ This graduation project focuses on climate data analysis and model evaluation fo
 ![Model Evaluation](https://img.shields.io/badge/Model%20Evaluation-5b2c83?style=flat-square)
 ![XAI](https://img.shields.io/badge/Explainable%20AI-6d28d9?style=flat-square)
 ![Precipitation Downscaling](https://img.shields.io/badge/Precipitation%20Downscaling-312e81?style=flat-square)
+![Deep Learning](https://img.shields.io/badge/Deep%20Learning-9333ea?style=flat-square)
+![Computer Vision](https://img.shields.io/badge/Computer%20Vision-0f766e?style=flat-square)
+![Generative AI](https://img.shields.io/badge/Generative%20AI-c026d3?style=flat-square)
+![GAN](https://img.shields.io/badge/GAN-db2777?style=flat-square)
+
 
 ## Evaluation Metrics
 
